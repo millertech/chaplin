@@ -20,10 +20,11 @@ Watch a demo of Chaplin [here](https://youtu.be/qlHi0As2alQ).
    ```
    chaplin/
    ├── benchmarks/
-       ├── language_models/
-            ├── lm_en_subword/
-       ├── models/
-            ├── LRS3_V_WER19.1/
+       ├── LRS3/
+           ├── language_models/
+               ├── lm_en_subword/
+           ├── models/
+               ├── LRS3_V_WER19.1/
    ├── ...
    ```
 4. Install and run `ollama`, and pull the [`llama3.2`](https://ollama.com/library/llama3.2) model.
