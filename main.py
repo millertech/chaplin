@@ -7,7 +7,7 @@ import numpy as np
 from datetime import datetime
 from ollama import chat
 from pydantic import BaseModel
-import keyboard
+from pynput import keyboard
 from concurrent.futures import ThreadPoolExecutor
 import os
 from huggingface_hub import hf_hub_download
@@ -15,6 +15,7 @@ import tempfile
 import shutil
 from utils.config import load_config
 import sys
+import configparser
 
 
 # pydantic model for the chat output
@@ -42,53 +43,93 @@ class Chaplin:
         self.frame_interval = 1 / self.fps
         self.frame_compression = 25
 
+        # pynput keyboard listener
+        self.keyboard_listener = keyboard.Listener(on_press=self.on_press)
+        self.keyboard_listener.start()
+
     def setup_model_cache(self):
         """Setup cache directory and download models from HuggingFace"""
-        # Create a temporary directory for model files
-        self.model_cache_dir = tempfile.mkdtemp()
+        # Use a persistent directory in the project
+        self.model_cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models")
         
-        # Download VSR model files
-        print("Downloading model files from HuggingFace...")
+        print(f"Using model cache directory: {self.model_cache_dir}")
+        
+        # Create directories if they don't exist
+        vsr_model_dir = os.path.join(self.model_cache_dir, "LRS3_V_WER19.1")
+        lm_model_dir = os.path.join(self.model_cache_dir, "lm_en_subword")
+        
+        print(f"Creating directories:")
+        print(f"VSR dir: {vsr_model_dir}")
+        print(f"LM dir: {lm_model_dir}")
+        
+        os.makedirs(vsr_model_dir, exist_ok=True)
+        os.makedirs(lm_model_dir, exist_ok=True)
+        
         try:
-            # Download all necessary files from the VSR model
+            # Download VSR model files
             vsr_files = [
                 "model.pth",
-                "model_config.json",
-                "tokenizer.model"
+                "model.json"
             ]
             
-            for file in vsr_files:
-                hf_hub_download(
-                    repo_id="willwade/LRS3_V_WER19.1",
-                    filename=file,
-                    local_dir=os.path.join(self.model_cache_dir, "LRS3_V_WER19.1")
-                )
+            # Check which files need downloading
+            missing_vsr_files = [f for f in vsr_files 
+                                if not os.path.exists(os.path.join(vsr_model_dir, f))]
+            
+            if missing_vsr_files:
+                print(f"Downloading VSR model files to {vsr_model_dir}:")
+                for file in missing_vsr_files:
+                    print(f"  Downloading {file}...")
+                    path = hf_hub_download(
+                        repo_id="willwade/LRS3_V_WER19.1",
+                        filename=file,
+                        local_dir=vsr_model_dir
+                    )
+                    print(f"  Downloaded to: {path}")
+            else:
+                print("VSR model files already present")
 
             # Download language model files
             lm_files = [
-                "lm_config.json",
-                "lm_model.bin",
-                "vocab.txt"
+                "model.json",
+                "model.pth"
             ]
             
-            for file in lm_files:
-                hf_hub_download(
-                    repo_id="willwade/lm_en_subword",
-                    filename=file,
-                    local_dir=os.path.join(self.model_cache_dir, "lm_en_subword")
-                )
+            # Check which files need downloading
+            missing_lm_files = [f for f in lm_files 
+                               if not os.path.exists(os.path.join(lm_model_dir, f))]
             
-            print("Model files downloaded successfully!")
+            if missing_lm_files:
+                print(f"Downloading language model files to {lm_model_dir}:")
+                for file in missing_lm_files:
+                    print(f"  Downloading {file}...")
+                    path = hf_hub_download(
+                        repo_id="willwade/lm_en_subword",
+                        filename=file,
+                        local_dir=lm_model_dir
+                    )
+                    print(f"  Downloaded to: {path}")
+            else:
+                print("Language model files already present")
+            
+            # Verify files exist
+            print("\nVerifying downloaded files:")
+            for file in vsr_files:
+                path = os.path.join(vsr_model_dir, file)
+                exists = os.path.exists(path)
+                print(f"  {path}: {'✓' if exists else '✗'}")
+            for file in lm_files:
+                path = os.path.join(lm_model_dir, file)
+                exists = os.path.exists(path)
+                print(f"  {path}: {'✓' if exists else '✗'}")
+            
+            print("\nModel files ready!")
+            
         except Exception as e:
             print(f"Error downloading model files: {e}")
-            if self.model_cache_dir and os.path.exists(self.model_cache_dir):
-                shutil.rmtree(self.model_cache_dir)
+            import traceback
+            print(traceback.format_exc())
             raise
-
-    def __del__(self):
-        """Cleanup temporary files on object destruction"""
-        if self.model_cache_dir and os.path.exists(self.model_cache_dir):
-            shutil.rmtree(self.model_cache_dir)
 
     def perform_inference(self, video_path):
         # perform inference on the video with the vsr model
@@ -240,9 +281,8 @@ class Chaplin:
             out.release()
         cv2.destroyAllWindows()
 
-    def on_action(self, event):
-        # toggles recording when alt key is pressed
-        if event.event_type == keyboard.KEY_DOWN and event.name == 'alt':
+    def on_press(self, key):
+        if key == keyboard.Key.alt:  # or Key.alt_l for left alt specifically
             self.recording = not self.recording
 
 
@@ -251,7 +291,6 @@ def main():
     config = load_config()
     
     # Override config with command line arguments
-    # Skip the first two arguments when running with uv (uv and run)
     args = sys.argv[3:] if sys.argv[1:2] == ['run'] else sys.argv[1:]
     
     for arg in args:
@@ -265,22 +304,39 @@ def main():
     # Use configuration values
     detector = config["model_config"]["detector"]
     gpu_idx = config["model_config"]["gpu_idx"]
+    config_filename = config["model_config"].get("config_filename", "./configs/LRS3_V_WER19.1.ini")
     
     chaplin = Chaplin()
-
-    # hook to toggle recording
-    keyboard.hook(lambda e: chaplin.on_action(e))
-
-    # Update config path to use downloaded files
-    vsr_config_path = os.path.join(chaplin.model_cache_dir, "LRS3_V_WER19.1", "model_config.json")
     
-    # load the model using downloaded files
+    # Convert config paths to absolute paths
+    config_parser = configparser.ConfigParser()
+    config_parser.read(config_filename)
+    
+    # Get the model directory that was actually used
+    model_dir = chaplin.model_cache_dir
+    
+    # Update paths to use the actual model directory
+    config_parser['model']['model_path'] = os.path.join(model_dir, "LRS3_V_WER19.1", "model.pth")
+    config_parser['model']['model_conf'] = os.path.join(model_dir, "LRS3_V_WER19.1", "model.json")
+    config_parser['model']['rnnlm'] = os.path.join(model_dir, "lm_en_subword", "model.pth")
+    config_parser['model']['rnnlm_conf'] = os.path.join(model_dir, "lm_en_subword", "model.json")
+    
+    # Write the updated config to a temporary file
+    temp_config = os.path.join(model_dir, 'temp_config.ini')
+    with open(temp_config, 'w') as f:
+        config_parser.write(f)
+    
+    # load the model using the config file with absolute paths
     chaplin.vsr_model = InferencePipeline(
-        vsr_config_path,
+        temp_config,
         device=torch.device(f"cuda:{gpu_idx}" if torch.cuda.is_available() and gpu_idx >= 0 else "cpu"),
         detector=detector,
         face_track=True
     )
+    
+    # Clean up temporary config
+    os.remove(temp_config)
+    
     print("Model loaded successfully!")
 
     # start the webcam video capture

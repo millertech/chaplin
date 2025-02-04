@@ -75,3 +75,8 @@ web_config:
 - `app.py` - Gradio web interface
 - `requirements.txt` - Dependencies for CLI version
 - `requirements-gradio.txt` - Dependencies for web version
+
+### macOS Setup
+1. Go to System Preferences > Security & Privacy > Privacy > Input Monitoring
+2. Add Terminal (or your IDE) to the list of allowed applications
+3. Restart your terminal/IDE
