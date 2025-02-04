@@ -2,34 +2,76 @@
 
 ![Chaplin Thumbnail](./thumbnail.png)
 
-A visual speech recognition (VSR) tool that reads your lips in real-time and types whatever you silently mouth. Runs fully locally.
+A visual speech recognition (VSR) tool that reads your lips in real-time and types whatever you silently mouth. Available both as a command-line tool and a web interface.
 
-Relies on a [model](https://github.com/mpc001/Visual_Speech_Recognition_for_Multiple_Languages?tab=readme-ov-file#autoavsr-models) trained on the [Lip Reading Sentences 3](https://mmai.io/datasets/lip_reading/) dataset as part of the [Auto-AVSR](https://github.com/mpc001/auto_avsr) project.
+## Versions
 
-Watch a demo of Chaplin [here](https://youtu.be/qlHi0As2alQ).
+### Command Line Version
+The command-line version runs locally and types text directly where your cursor is positioned.
 
-## Setup
-
-1. Clone the repository, and `cd` into it:
+#### Setup
+1. Clone the repository and cd into it:
    ```bash
    git clone https://github.com/amanvirparhar/chaplin
    cd chaplin
    ```
-2. The required model components are hosted on HuggingFace:
-   - [LRS3_V_WER19.1](https://huggingface.co/willwade/LRS3_V_WER19.1)
-   - [lm_en_subword](https://huggingface.co/willwade/lm_en_subword)
-
-   They will be automatically downloaded when you first run the application.
-
-3. Install and run `ollama`, and pull the [`llama3.2`](https://ollama.com/library/llama3.2) model.
-4. Install [`uv`](https://github.com/astral-sh/uv).
-
-## Usage
-
-1. Run the following command:
+2. Install [`uv`](https://github.com/astral-sh/uv)
+3. Install dependencies:
    ```bash
-   sudo uv run --with-requirements requirements.txt --python 3.12 main.py config_filename=./configs/LRS3_V_WER19.1.ini detector=mediapipe
+   uv pip install -r requirements.txt
    ```
-2. Once the camera feed is displayed, you can start "recording" by pressing the `option` key (Mac) or the `alt` key (Windows/Linux), and start mouthing words.
-3. To stop recording, press the `option` key (Mac) or the `alt` key (Windows/Linux) again. You should see some text being typed out wherever your cursor is.
-4. To exit gracefully, focus on the window displaying the camera feed and press `q`.
+
+#### Usage
+1. Run:
+   ```bash
+   uv run main.py config_filename=./configs/LRS3_V_WER19.1.ini detector=mediapipe
+   ```
+2. Press `alt/option` key to start/stop recording
+3. Press `q` to exit
+
+### Web Interface Version
+A Gradio-based web interface that runs in your browser.
+
+#### Setup
+1. Install dependencies:
+   ```bash
+   uv pip install -r requirements-gradio.txt
+   ```
+
+#### Usage
+1. Start the Gradio server:
+   ```bash
+   uv run app.py
+   ```
+2. Open your browser to the displayed URL (usually http://localhost:7860)
+
+## Models
+Both versions use the same HuggingFace models:
+- [LRS3_V_WER19.1](https://huggingface.co/willwade/LRS3_V_WER19.1) - Visual speech recognition
+- [lm_en_subword](https://huggingface.co/willwade/lm_en_subword) - Language model
+
+Models are automatically downloaded on first run.
+
+## Configuration
+The application can be configured using either:
+- Command line arguments (for main.py)
+- Environment variables
+- config.yaml file
+
+Example config.yaml:
+```yaml
+version: "cli"  # or "web"
+requirements_file: "requirements.txt"  # or "requirements-gradio.txt"
+model_config:
+  detector: "mediapipe"
+  gpu_idx: 0
+web_config:
+  port: 7860
+  share: false
+```
+
+## Development
+- `main.py` - Command line interface
+- `app.py` - Gradio web interface
+- `requirements.txt` - Dependencies for CLI version
+- `requirements-gradio.txt` - Dependencies for web version

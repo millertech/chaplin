@@ -13,6 +13,8 @@ import os
 from huggingface_hub import hf_hub_download
 import tempfile
 import shutil
+from utils.config import load_config
+import sys
 
 
 # pydantic model for the chat output
@@ -244,8 +246,26 @@ class Chaplin:
             self.recording = not self.recording
 
 
-@hydra.main(version_base=None, config_path="hydra_configs", config_name="default")
-def main(cfg):
+def main():
+    # Load configuration
+    config = load_config()
+    
+    # Override config with command line arguments
+    # Skip the first two arguments when running with uv (uv and run)
+    args = sys.argv[3:] if sys.argv[1:2] == ['run'] else sys.argv[1:]
+    
+    for arg in args:
+        if '=' in arg:
+            key, value = arg.split('=')
+            if key == "detector":
+                config["model_config"]["detector"] = value
+            elif key == "config_filename":
+                config["model_config"]["config_filename"] = value
+    
+    # Use configuration values
+    detector = config["model_config"]["detector"]
+    gpu_idx = config["model_config"]["gpu_idx"]
+    
     chaplin = Chaplin()
 
     # hook to toggle recording
@@ -257,8 +277,8 @@ def main(cfg):
     # load the model using downloaded files
     chaplin.vsr_model = InferencePipeline(
         vsr_config_path,
-        device=torch.device(f"cuda:{cfg.gpu_idx}" if torch.cuda.is_available() and cfg.gpu_idx >= 0 else "cpu"),
-        detector=cfg.detector,
+        device=torch.device(f"cuda:{gpu_idx}" if torch.cuda.is_available() and gpu_idx >= 0 else "cpu"),
+        detector=detector,
         face_track=True
     )
     print("Model loaded successfully!")

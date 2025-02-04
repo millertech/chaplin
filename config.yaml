@@ -1,0 +1,22 @@
+# Default configuration for Chaplin
+version: "cli"  # "cli" or "web"
+
+# Path to requirements file
+requirements_file: "requirements.txt"
+
+# Model configuration
+model_config:
+  detector: "mediapipe"
+  gpu_idx: 0
+  face_track: true
+
+# Web interface configuration (for app.py)
+web_config:
+  port: 7860
+  share: false
+  theme: "default"
+  allow_flagging: false
+  
+# Common configuration
+cache_dir: ".cache"
+debug: false 

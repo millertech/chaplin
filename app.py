@@ -5,6 +5,7 @@ from pipelines.pipeline import InferencePipeline
 import time
 from huggingface_hub import hf_hub_download
 import os
+from utils.config import load_config
 
 
 class ChaplinGradio:
@@ -183,5 +184,15 @@ iface = gr.Interface(
     live=True
 )
 
+def main():
+    # Load configuration
+    config = load_config()
+    
+    # Setup your Gradio interface
+    iface.launch(
+        server_port=config["web_config"]["port"],
+        share=config["web_config"]["share"]
+    )
+
 if __name__ == "__main__":
-    iface.launch() 
+    main() 

@@ -1,7 +1,12 @@
 gradio>=4.0.0
 torch
 torchvision
+torchaudio
 opencv-python
 mediapipe
 numpy
 huggingface-hub
+hydra-core
+keyboard
+ollama
+pydantic
