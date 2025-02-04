@@ -10,6 +10,9 @@ from pydantic import BaseModel
 import keyboard
 from concurrent.futures import ThreadPoolExecutor
 import os
+from huggingface_hub import hf_hub_download
+import tempfile
+import shutil
 
 
 # pydantic model for the chat output
@@ -21,6 +24,8 @@ class ChaplinOutput(BaseModel):
 class Chaplin:
     def __init__(self):
         self.vsr_model = None
+        self.model_cache_dir = None
+        self.setup_model_cache()
 
         # flag to toggle recording
         self.recording = False
@@ -34,6 +39,54 @@ class Chaplin:
         self.fps = 16
         self.frame_interval = 1 / self.fps
         self.frame_compression = 25
+
+    def setup_model_cache(self):
+        """Setup cache directory and download models from HuggingFace"""
+        # Create a temporary directory for model files
+        self.model_cache_dir = tempfile.mkdtemp()
+        
+        # Download VSR model files
+        print("Downloading model files from HuggingFace...")
+        try:
+            # Download all necessary files from the VSR model
+            vsr_files = [
+                "model.pth",
+                "model_config.json",
+                "tokenizer.model"
+            ]
+            
+            for file in vsr_files:
+                hf_hub_download(
+                    repo_id="willwade/LRS3_V_WER19.1",
+                    filename=file,
+                    local_dir=os.path.join(self.model_cache_dir, "LRS3_V_WER19.1")
+                )
+
+            # Download language model files
+            lm_files = [
+                "lm_config.json",
+                "lm_model.bin",
+                "vocab.txt"
+            ]
+            
+            for file in lm_files:
+                hf_hub_download(
+                    repo_id="willwade/lm_en_subword",
+                    filename=file,
+                    local_dir=os.path.join(self.model_cache_dir, "lm_en_subword")
+                )
+            
+            print("Model files downloaded successfully!")
+        except Exception as e:
+            print(f"Error downloading model files: {e}")
+            if self.model_cache_dir and os.path.exists(self.model_cache_dir):
+                shutil.rmtree(self.model_cache_dir)
+            raise
+
+    def __del__(self):
+        """Cleanup temporary files on object destruction"""
+        if self.model_cache_dir and os.path.exists(self.model_cache_dir):
+            shutil.rmtree(self.model_cache_dir)
 
     def perform_inference(self, video_path):
         # perform inference on the video with the vsr model
@@ -198,10 +251,16 @@ def main(cfg):
     # hook to toggle recording
     keyboard.hook(lambda e: chaplin.on_action(e))
 
-    # load the model
+    # Update config path to use downloaded files
+    vsr_config_path = os.path.join(chaplin.model_cache_dir, "LRS3_V_WER19.1", "model_config.json")
+    
+    # load the model using downloaded files
     chaplin.vsr_model = InferencePipeline(
-        cfg.config_filename, device=torch.device(f"cuda:{cfg.gpu_idx}" if torch.cuda.is_available(
-        ) and cfg.gpu_idx >= 0 else "cpu"), detector=cfg.detector, face_track=True)
+        vsr_config_path,
+        device=torch.device(f"cuda:{cfg.gpu_idx}" if torch.cuda.is_available() and cfg.gpu_idx >= 0 else "cpu"),
+        detector=cfg.detector,
+        face_track=True
+    )
     print("Model loaded successfully!")
 
     # start the webcam video capture

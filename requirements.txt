@@ -4,3 +4,4 @@ torchvision
 opencv-python
 mediapipe
 numpy
+huggingface-hub
