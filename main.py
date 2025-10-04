@@ -16,6 +16,8 @@ import shutil
 from utils.config import load_config
 import sys
 import configparser
+import pyttsx3
+
 
 
 # pydantic model for the chat output
@@ -46,6 +48,12 @@ class Chaplin:
         # pynput keyboard listener
         self.keyboard_listener = keyboard.Listener(on_press=self.on_press)
         self.keyboard_listener.start()
+        self.kb = keyboard.Controller()
+
+        # Initialize the TTS engine
+        self.tts_engine = pyttsx3.init()
+        self.tts_engine.setProperty('rate', 120)
+
 
     def setup_model_cache(self):
         """Setup cache directory and download models from HuggingFace"""
@@ -61,7 +69,7 @@ class Chaplin:
         print(f"Creating directories:")
         print(f"VSR dir: {vsr_model_dir}")
         print(f"LM dir: {lm_model_dir}")
-        
+
         os.makedirs(vsr_model_dir, exist_ok=True)
         os.makedirs(lm_model_dir, exist_ok=True)
         
@@ -99,19 +107,6 @@ class Chaplin:
             missing_lm_files = [f for f in lm_files 
                                if not os.path.exists(os.path.join(lm_model_dir, f))]
             
-            if missing_lm_files:
-                print(f"Downloading language model files to {lm_model_dir}:")
-                for file in missing_lm_files:
-                    print(f"  Downloading {file}...")
-                    path = hf_hub_download(
-                        repo_id="willwade/lm_en_subword",
-                        filename=file,
-                        local_dir=lm_model_dir
-                    )
-                    print(f"  Downloaded to: {path}")
-            else:
-                print("Language model files already present")
-            
             # Verify files exist
             print("\nVerifying downloaded files:")
             for file in vsr_files:
@@ -122,7 +117,6 @@ class Chaplin:
                 path = os.path.join(lm_model_dir, file)
                 exists = os.path.exists(path)
                 print(f"  {path}: {'✓' if exists else '✗'}")
-            
             print("\nModel files ready!")
             
         except Exception as e:
@@ -135,46 +129,29 @@ class Chaplin:
         # perform inference on the video with the vsr model
         output = self.vsr_model(video_path)
 
-        # write the raw output
-        keyboard.write(output)
+        # write the raw output, Doesnt actually work bc of keyboard speed
+        for char in output:
+            self.kb.press(char)
+            #limit typing speed
+            time.sleep(0.02)
+            self.kb.release(char)
+            time.sleep(0.02)
+
+        #print the raw output
+        print(f"Raw output: {output}")
+        self.tts_engine.say(f"{output}")
+        self.tts_engine.runAndWait()
 
         # shift left to select the entire output
-        cmd = ""
-        for i in range(len(output)):
-            cmd += 'shift+left, '
-        cmd = cmd[:-2]
-        keyboard.press_and_release(cmd)
+        #for i in range(len(output)):
+        #    with self.kb.pressed(keyboard.Key.shift):
+        #        self.kb.press(keyboard.Key.left)
+        #        self.kb.release(keyboard.Key.left)
 
-        # perform inference on the raw output to get back a "correct" version
-        response = chat(
-            model='llama3.2',
-            messages=[
-                {
-                    'role': 'system',
-                    'content': f"You are an assistant that helps make corrections to the output of a lipreading model. The text you will receive was transcribed using a video-to-text system that attempts to lipread the subject speaking in the video, so the text will likely be imperfect.\n\nIf something seems unusual, assume it was mistranscribed. Do your best to infer the words actually spoken, and make changes to the mistranscriptions in your response. Do not add more words or content, just change the ones that seem to be out of place (and, therefore, mistranscribed). Do not change even the wording of sentences, just individual words that look nonsensical in the context of all of the other words in the sentence.\n\nAlso, add correct punctuation to the entire text. ALWAYS end each sentence with the appropriate sentence ending: '.', '?', or '!'. The input text in all-caps, although your respose should be capitalized correctly and should NOT be in all-caps.\n\nReturn the corrected text in the format of 'list_of_changes' and 'corrected_text'."
-                },
-                {
-                    'role': 'user',
-                    'content': f"Transcription:\n\n{output}"
-                }
-            ],
-            format=ChaplinOutput.model_json_schema()
-        )
-
-        # get only the corrected text
-        chat_output = ChaplinOutput.model_validate_json(
-            response.message.content)
-
-        # if last character isn't a sentence ending (happens sometimes), add a period
-        if chat_output.corrected_text[-1] not in ['.', '?', '!']:
-            chat_output.corrected_text += '.'
-
-        # write the corrected text
-        keyboard.write(chat_output.corrected_text + " ")
 
         # return the corrected text and the video path
         return {
-            "output": chat_output.corrected_text,
+            "output": output,
             "video_path": video_path
         }
 

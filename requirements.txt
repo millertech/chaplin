@@ -4,11 +4,14 @@ torchvision
 torchaudio
 opencv-python
 mediapipe
-numpy
+numpy 
 huggingface-hub
 hydra-core
-pynput
+keyboard
 ollama
 pydantic
 scikit-image
 configparser
+pyautogui
+pyttsx3
+
