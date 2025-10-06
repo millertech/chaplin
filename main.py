@@ -137,8 +137,16 @@ class Chaplin:
             self.kb.release(char)
             time.sleep(0.02)
 
+        currentTime_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        #format date time as Month Day, Hour:Minute, in 12 hour format
+        
+        #formatted_time_str = datetime.now().strftime("%B %d, %I:%M %p")
+        #format as Month Day, Hour:Minute
+        formatted_time_str = datetime.now().strftime("%B %d, %I:%M %p")
         #print the raw output
-        print(f"Raw output: {output}")
+        print(f"\nAt {formatted_time_str}, Judy said: \n")
+        print(f"\t: {output}")
+        print(f'\n----------------------------------\n')
         self.tts_engine.say(f"{output}")
         self.tts_engine.runAndWait()
 
