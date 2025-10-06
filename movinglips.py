@@ -9,6 +9,12 @@ prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
 
 mouth_moving = False
 
+# Low-pass filter setup
+alpha = 0.35  # Smoothing factor (0 < alpha < 1), lower = smoother
+filtered_movement_diff = 0.0
+mean_face_movement_filtered = 0.0
+mean_mouth_movement_filtered = 0.0
+
 while True:
     ret, frame = cap.read()
     if not ret:
@@ -40,14 +46,20 @@ while True:
         mean_mouth_movement = np.mean(mag_mouth)
 
         # Only trigger if mouth moves significantly more than face
+        mean_face_movement_filtered = alpha * mean_face_movement + (1 - alpha) * mean_face_movement_filtered
+        mean_mouth_movement_filtered = alpha * mean_mouth_movement + (1 - alpha) * mean_mouth_movement_filtered
+
         movement_diff = mean_mouth_movement - mean_face_movement
 
+        # Low-pass filter: smooth the movement_diff
+        filtered_movement_diff = mean_mouth_movement_filtered - mean_face_movement_filtered
+
         # Thresholds (tune as needed)
-        print(f'D:{movement_diff:.2f}  \tM:{mean_mouth_movement:.2f}  \tF:{mean_face_movement:.2f}')
-        if movement_diff > 1.1 and mean_mouth_movement > 1.2:
+        print(f'D:{movement_diff:.2f}  \tFD:{filtered_movement_diff:.2f}  \tM:{mean_mouth_movement_filtered:.2f}  \tF:{mean_face_movement_filtered:.2f}')
+        if  mean_mouth_movement_filtered > 1.0 and mean_face_movement_filtered < 1.0:#filtered_movement_diff > 1.1 and
             mouth_moving = True
-            print(f"Mouth is moving: D:{movement_diff:.2f}  M:{mean_mouth_movement:.2f}  F:{mean_face_movement:.2f}")
-            cv2.putText(frame, f"Lips Moving! diff:{movement_diff:.2f} mouth: {mean_mouth_movement:.2f} face: {mean_face_movement:.2f} ", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX,
+            print(f"Mouth is moving: FD:{filtered_movement_diff:.2f}  M:{mean_mouth_movement_filtered:.2f}  F:{mean_face_movement_filtered:.2f}")
+            cv2.putText(frame, f"Lips Moving! fdiff:{filtered_movement_diff:.2f} mouth: {mean_mouth_movement_filtered:.2f} face: {mean_face_movement_filtered:.2f} ", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX,
                         0.9, (0, 0, 255), 2)
         else:
             mouth_moving = False
