@@ -7,36 +7,32 @@ face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_fronta
 
 cap = cv2.VideoCapture(0)
 ret, prev_frame = cap.read()
+if not ret:
+    print("Error: Could not read from camera.")
+    cap.release()
+    exit(1)
 prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
 
-mouth_moving = False
-
-# Low-pass filter setup
-alpha = 0.5  # Smoothing factor (0 < alpha < 1), lower = smoother
-filtered_movement_diff = 0.0
-mean_face_movement_filtered = 0.0
-mean_mouth_movement_filtered = 0.0
-p_x, p_y = 0, 0
-p_h, p_w = 0, 0
-box_alpha = 0.01
+mouth_open = False
 
 # For live graph
 window_size = 200
-mouth_history = deque(maxlen=window_size)
-face_history = deque(maxlen=window_size)
-diff_history = deque(maxlen=window_size)
+circle_count_history = deque(maxlen=window_size)
+radius_history = deque(maxlen=window_size)
 
 plt.ion()
 fig, ax = plt.subplots()
-line1, = ax.plot([], [], label='Mouth')
-line2, = ax.plot([], [], label='Face')
-line3, = ax.plot([], [], label='Diff')
-ax.set_ylim(0, 5)
+line1, = ax.plot([], [], label='Mouth Circles')
+line2, = ax.plot([], [], label='Mean Radius')
+ax.set_ylim(0, 50)  # Adjust as needed for your expected radius range
 ax.set_xlim(0, window_size)
 ax.legend()
-ax.set_title("Mean Filtered Movement (Live)")
+ax.set_title("Detected Circles and Mean Radius in Mouth ROI (Live)")
 ax.set_xlabel("Frame")
-ax.set_ylabel("Movement")
+ax.set_ylabel("Value")
+
+p_x, p_y, p_w, p_h = 0, 0, 0, 0
+box_alpha = 0.01
 
 while True:
     ret, frame = cap.read()
@@ -44,82 +40,80 @@ while True:
         break
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    faces = face_cascade.detectMultiScale(gray, 1.1, 5)#what are the arguments here? 
-    #scaleFactor=1.3, minNeighbors=5
-    #scaleFactor: Parameter specifying how much the image size is reduced at each image scale.
-    #minNeighbors: Parameter specifying how many neighbors each candidate rectangle should have to retain it.
-    #adjust scalefactor when you want to detect smaller or larger faces, a larger value = less detections
-    # a smaller value = more detections, detections are more accurate with smaller values but slower
+    faces = face_cascade.detectMultiScale(gray, 1.1, 5)
 
-    #minNeighbors: higher value results in less detections but with higher quality
     for (x, y, w, h) in faces:
         y = int(box_alpha * p_y + (1 - box_alpha) * y)
         x = int(box_alpha * p_x + (1 - box_alpha) * x)
         w = int(box_alpha * p_w + (1 - box_alpha) * w)
         h = int(box_alpha * p_h + (1 - box_alpha) * h)
         p_x, p_y, p_w, p_h = x, y, w, h
-        #make the face box smaller to just include mouth area
-        y = int(y + h * 0.4)#adjust y to start halfway down the face
-        h = int(h * 0.55)#adjust height to be half the face height
-        x = int(x + w * 0.15)#adjust x to start a bit in from the left
-        w = int(w * 0.7)#adjust width to be narrower
 
-        # Face ROI
-        face_roi = gray[y:y+h, x:x+w]
-        prev_face_roi = prev_gray[y:y+h, x:x+w]
+        # Focus on mouth area
+        y_mouth = int(y + h * 0.6)
+        h_mouth = int(h * 0.5)
+        x_mouth = int(x + w * 0.15)
+        w_mouth = int(w * 0.7)
 
-        # Mouth ROI (lower part of the face)
-        mouth_roi = gray[y + h//2:y + h, x:x + w]
-        prev_mouth_roi = prev_gray[y + h//2:y + h, x:x + w]
+        mouth_roi = gray[y_mouth:y_mouth + h_mouth, x_mouth:x_mouth + w_mouth]
+        mouth_roi_blur = cv2.medianBlur(mouth_roi, 7)
 
-        # Optical flow for face and mouth
-        flow_face = cv2.calcOpticalFlowFarneback(prev_face_roi, face_roi, None,
-                                                 pyr_scale=0.5, levels=3, winsize=15,
-                                                 iterations=3, poly_n=5, poly_sigma=1.2, flags=0)
-        mag_face, _ = cv2.cartToPolar(flow_face[..., 0], flow_face[..., 1])
-        mean_face_movement = np.mean(mag_face)
+        # Preprocess mouth ROI for better circle detection
+        mouth_roi_blur = cv2.GaussianBlur(mouth_roi, (9, 9), 2)
+        mouth_roi_edges = cv2.Canny(mouth_roi_blur, 50, 150)
 
-        flow_mouth = cv2.calcOpticalFlowFarneback(prev_mouth_roi, mouth_roi, None,
-                                                  pyr_scale=0.5, levels=3, winsize=15,
-                                                  iterations=3, poly_n=5, poly_sigma=1.2, flags=0)
-        mag_mouth, _ = cv2.cartToPolar(flow_mouth[..., 0], flow_mouth[..., 1])
-        mean_mouth_movement = np.mean(mag_mouth)
+        # Hough Circle detection (stricter parameters)
+        circles = cv2.HoughCircles(
+            mouth_roi_edges,
+            cv2.HOUGH_GRADIENT,
+            dp=1.5,
+            minDist=int(h_mouth * 0.5),
+            param1=100,
+            param2=35,  # Higher threshold for stricter detection
+            minRadius=int(h_mouth * 0.05),
+            maxRadius=int(h_mouth * 0.45)
+        )
 
-        # Only trigger if mouth moves significantly more than face
-        mean_face_movement_filtered = round(alpha * mean_face_movement + (1 - alpha) * mean_face_movement_filtered, ndigits=1)
-        mean_mouth_movement_filtered = round(alpha * mean_mouth_movement + (1 - alpha) * mean_mouth_movement_filtered, ndigits=1)
+        circle_count = 0
+        mean_radius = 0
+        if circles is not None:
+            circles = np.uint16(np.around(circles))
+            # Optionally, filter circles by position (centered in ROI)
+            filtered_circles = []
+            radii = []
+            for i in circles[0, :]:
+                cx, cy, r = i
+                if (cx > w_mouth * 0.25 and cx < w_mouth * 0.75 and
+                    cy > h_mouth * 0.25 and cy < h_mouth * 0.75):
+                    filtered_circles.append(i)
+                    radii.append(r)
+                    cv2.circle(frame, (x_mouth + cx, y_mouth + cy), r, (0, 255, 0), 2)
+                    cv2.circle(frame, (x_mouth + cx, y_mouth + cy), 2, (0, 0, 255), 3)
+            circle_count = len(filtered_circles)
+            if radii:
+                mean_radius = np.mean(radii)
+        circle_count_history.append(circle_count)
+        radius_history.append(mean_radius)
 
-        movement_diff = mean_mouth_movement - mean_face_movement
-
-        # Low-pass filter: smooth the movement_diff
-        filtered_movement_diff = mean_mouth_movement_filtered - mean_face_movement_filtered
-
-        # Store for live graph
-        mouth_history.append(mean_mouth_movement_filtered)
-        face_history.append(mean_face_movement_filtered)
-        diff_history.append(filtered_movement_diff)
-
-        # Thresholds (tune as needed)
-        print(f'D:{movement_diff:.2f}  \tFD:{filtered_movement_diff:.2f}  \tM:{mean_mouth_movement_filtered:.2f}  \tF:{mean_face_movement_filtered:.2f}')
-        if  mean_mouth_movement_filtered > 1.0 and mean_face_movement_filtered < 1.0:
-            mouth_moving = True
-            print(f"Mouth is moving: FD:{filtered_movement_diff:.2f}  M:{mean_mouth_movement_filtered:.2f}  F:{mean_face_movement_filtered:.2f}")
-            cv2.putText(frame, f"Lips Moving! fdiff:{filtered_movement_diff:.2f} mouth: {mean_mouth_movement_filtered:.2f} face: {mean_face_movement_filtered:.2f} ", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX,
+        # Threshold: if at least one circle is detected, consider mouth open
+        if circle_count > 0:
+            mouth_open = True
+            cv2.putText(frame, f"Mouth Open! Circles: {circle_count} MeanR: {mean_radius:.1f}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX,
                         0.9, (0, 0, 255), 2)
         else:
-            mouth_moving = False
+            mouth_open = False
 
-        cv2.rectangle(frame, (x, y + h//2), (x + w, y + h), (255, 0, 0), 2)
+        # Draw rectangle around mouth ROI
+        cv2.rectangle(frame, (x_mouth, y_mouth), (x_mouth + w_mouth, y_mouth + h_mouth), (255, 0, 0), 2)
 
     # Update live graph
-    line1.set_data(range(len(mouth_history)), list(mouth_history))
-    line2.set_data(range(len(face_history)), list(face_history))
-    line3.set_data(range(len(diff_history)), list(diff_history))
-    ax.set_xlim(max(0, len(mouth_history) - window_size), len(mouth_history))
+    line1.set_data(range(len(circle_count_history)), list(circle_count_history))
+    line2.set_data(range(len(radius_history)), list(radius_history))
+    ax.set_xlim(max(0, len(circle_count_history) - window_size), len(circle_count_history))
     ax.figure.canvas.draw()
     ax.figure.canvas.flush_events()
 
-    cv2.imshow('Lip Movement Detection', frame)
+    cv2.imshow('Mouth Open Detection (Circle)', frame)
     prev_gray = gray.copy()
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
