@@ -29,35 +29,27 @@ class Chaplin:
         self.model_cache_dir = None
         self.setup_model_cache()
 
+        self.executor = ThreadPoolExecutor(max_workers=1)
+
         # flag to toggle recording
         self.recording = False
 
         self.processing_output = False
-
-        # thread stuff
-        self.executor = ThreadPoolExecutor(max_workers=1)
-
-        # video params
+        self.recording = False
+        self.pre_record_countdown = None
+        self.recording_countdown = None
+        self.countdown_started = False
         self.output_prefix = "webcam"
         self.res_factor = 3
         self.fps = 16
         self.frame_interval = 1 / self.fps
         self.frame_compression = 25
-
-        # pynput keyboard listener
-        self.keyboard_listener = keyboard.Listener(on_press=self.on_press)
-        self.keyboard_listener.start()
         self.kb = keyboard.Controller()
-
-        # Initialize the TTS engine
         self.tts_engine = pyttsx3.init()
         self.tts_engine.setProperty('rate', 120)
-
-        # Lip movement detection params
-        self.alpha = 0.35
-        self.mean_face_movement_filtered = 0.0
-        self.mean_mouth_movement_filtered = 0.0
-        self.last_lip_movement_time = None
+        # Circle detection smoothing
+        self.p_x, self.p_y, self.p_w, self.p_h = 0, 0, 0, 0
+        self.box_alpha = 0.01
 
     def setup_model_cache(self):
         """Setup cache directory and download models from HuggingFace"""
@@ -123,34 +115,48 @@ class Chaplin:
             "video_path": video_path
         }
 
-    def detect_lip_movement(self, prev_gray, gray, faces):
-        mouth_moving = False
+    def detect_mouth_circle(self, gray, faces):
         for (x, y, w, h) in faces:
-            face_roi = gray[y:y+h, x:x+w]
-            prev_face_roi = prev_gray[y:y+h, x:x+w]
-            mouth_roi = gray[y + h//2:y + h, x:x + w]
-            prev_mouth_roi = prev_gray[y + h//2:y + h, x:x + w]
-            flow_face = cv2.calcOpticalFlowFarneback(prev_face_roi, face_roi, None,
-                                                     pyr_scale=0.5, levels=3, winsize=15,
-                                                     iterations=3, poly_n=5, poly_sigma=1.2, flags=0)
-            mag_face, _ = cv2.cartToPolar(flow_face[..., 0], flow_face[..., 1])
-            mean_face_movement = np.mean(mag_face)
-            flow_mouth = cv2.calcOpticalFlowFarneback(prev_mouth_roi, mouth_roi, None,
-                                                      pyr_scale=0.5, levels=3, winsize=15,
-                                                      iterations=3, poly_n=5, poly_sigma=1.2, flags=0)
-            mag_mouth, _ = cv2.cartToPolar(flow_mouth[..., 0], flow_mouth[..., 1])
-            mean_mouth_movement = np.mean(mag_mouth)
-            self.mean_face_movement_filtered = self.alpha * mean_face_movement + (1 - self.alpha) * self.mean_face_movement_filtered
-            self.mean_mouth_movement_filtered = self.alpha * mean_mouth_movement + (1 - self.alpha) * self.mean_mouth_movement_filtered
-            filtered_movement_diff = self.mean_mouth_movement_filtered - self.mean_face_movement_filtered
-            print(f'D:{mean_mouth_movement - mean_face_movement:.2f}  \tFD:{filtered_movement_diff:.2f}  \tM:{self.mean_mouth_movement_filtered:.2f}  \tF:{self.mean_face_movement_filtered:.2f}')
-            if self.mean_mouth_movement_filtered > 1.1 and self.mean_mouth_movement_filtered < 1.2:
-                mouth_moving = True
-                self.last_lip_movement_time = time.time()
-                cv2.putText(gray, f"Lips Moving!", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX,
-                            0.9, (0, 0, 255), 2)
-            cv2.rectangle(gray, (x, y + h//2), (x + w, y + h), (255, 0, 0), 2)
-        return mouth_moving
+            # Smooth face position
+            y = int(self.box_alpha * self.p_y + (1 - self.box_alpha) * y)
+            x = int(self.box_alpha * self.p_x + (1 - self.box_alpha) * x)
+            w = int(self.box_alpha * self.p_w + (1 - self.box_alpha) * w)
+            h = int(self.box_alpha * self.p_h + (1 - self.box_alpha) * h)
+            self.p_x, self.p_y, self.p_w, self.p_h = x, y, w, h
+
+            # Focus on mouth area
+            y_mouth = int(y + h * 0.6)
+            h_mouth = int(h * 0.5)
+            x_mouth = int(x + w * 0.15)
+            w_mouth = int(w * 0.7)
+
+            mouth_roi = gray[y_mouth:y_mouth + h_mouth, x_mouth:x_mouth + w_mouth]
+            mouth_roi_blur = cv2.GaussianBlur(mouth_roi, (9, 9), 2)
+            mouth_roi_edges = cv2.Canny(mouth_roi_blur, 50, 150)
+
+            circles = cv2.HoughCircles(
+                mouth_roi_edges,
+                cv2.HOUGH_GRADIENT,
+                dp=1.5,
+                minDist=int(h_mouth * 0.5),
+                param1=100,
+                param2=35,
+                minRadius=int(h_mouth * 0.05),
+                maxRadius=int(h_mouth * 0.45)
+            )
+
+            circle_count = 0
+            if circles is not None:
+                circles = np.uint16(np.around(circles))
+                filtered_circles = []
+                for i in circles[0, :]:
+                    cx, cy, r = i
+                    if (cx > w_mouth * 0.25 and cx < w_mouth * 0.75 and
+                        cy > h_mouth * 0.25 and cy < h_mouth * 0.75):
+                        filtered_circles.append(i)
+                circle_count = len(filtered_circles)
+            return circle_count > 0
+        return False
 
     def start_webcam(self):
         cap = cv2.VideoCapture(0)
@@ -160,14 +166,22 @@ class Chaplin:
         frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         ret, prev_frame = cap.read()
+        if not ret:
+            print("Error: Could not read from camera.")
+            cap.release()
+            return
         prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
         last_frame_time = time.time()
         futures = []
         output_path = ""
         out = None
         frame_count = 0
+
         self.recording = False
-        self.last_lip_movement_time = None
+        self.processing_output = False
+        self.pre_record_countdown = None
+        self.recording_countdown = None
+        self.countdown_started = False
 
         while True:
             key = cv2.waitKey(1) & 0xFF
@@ -183,28 +197,41 @@ class Chaplin:
                 break
 
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+            faces = face_cascade.detectMultiScale(gray, 1.1, 5)
 
-            mouth_moving = self.detect_lip_movement(prev_gray, gray, faces)
-            if self.processing_output:
-                # Start recording if lips start moving
-                if mouth_moving and not self.recording:
+            mouth_circle = self.detect_mouth_circle(gray, faces)
+
+            # Only allow new recording if not processing output
+            if not self.processing_output:
+                if mouth_circle and not self.recording and not self.countdown_started:
+                    self.pre_record_countdown = current_time
+                    self.countdown_started = True
+                    print("Mouth 'O' detected: Starting 3-second countdown.")
+
+            # Handle pre-record countdown
+            if self.countdown_started and not self.recording:
+                elapsed = current_time - self.pre_record_countdown
+                if elapsed < 1:
+                    cv2.putText(frame, "3", (frame.shape[1] // 2 - 50, frame.shape[0] // 2), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 5)
+                elif elapsed < 2:
+                    cv2.putText(frame, "2", (frame.shape[1] // 2 - 50, frame.shape[0] // 2), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 5)
+                elif elapsed < 3:
+                    cv2.putText(frame, "1", (frame.shape[1] // 2 - 50, frame.shape[0] // 2), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 5)
+                else:
                     self.recording = True
-                    self.last_lip_movement_time = time.time()
-                    print("Lip movement detected: Starting recording.")
+                    self.recording_countdown = current_time
+                    self.countdown_started = False
+                    print("Countdown complete: Starting recording.")
 
-            # Stop recording 2 seconds after lips stop moving
+            # Handle recording and recording countdown
             if self.recording:
-                if mouth_moving:
-                    self.last_lip_movement_time = time.time()
-                elif self.last_lip_movement_time and (current_time - self.last_lip_movement_time > 6):
+                elapsed_recording = current_time - self.recording_countdown
+                seconds_left = max(0, 5 - int(elapsed_recording))
+                cv2.putText(frame, f"Recording: {seconds_left}", (frame.shape[1] // 2 - 100, frame.shape[0] // 2), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 3)
+                if seconds_left == 0:
                     self.recording = False
-                    print("No lip movement for 6 seconds: Stopping recording.")
-
-            #stop recording after 10 seconds max
-            if self.recording and self.last_lip_movement_time and (current_time - self.last_lip_movement_time > 10):
-                self.recording = False
-                print("Max recording time reached: Stopping recording.")    
+                    self.processing_output = True
+                    print("Recording countdown complete: Stopping recording.")
 
             if current_time - last_frame_time >= self.frame_interval:
                 encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), self.frame_compression]
@@ -228,7 +255,6 @@ class Chaplin:
                     if out is not None:
                         out.release()
                     if frame_count >= self.fps * 2:
-                        self.processing_output = True
                         futures.append(self.executor.submit(self.perform_inference, output_path))
                     else:
                         os.remove(output_path)
@@ -248,6 +274,7 @@ class Chaplin:
                     result = fut.result()
                     os.remove(result["video_path"])
                     futures.remove(fut)
+                    self.processing_output = False
                 else:
                     break
 
