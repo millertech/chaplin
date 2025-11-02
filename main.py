@@ -210,14 +210,16 @@ class Chaplin:
                     self.countdown_started = True
                     print("Mouth 'O' detected: Starting 1.5-second countdown.")
 
+            # --- Only flip the countdown/recording text, not the whole frame ---
+            display_frame = frame.copy()
             if self.countdown_started and not self.recording:
                 elapsed = current_time - self.pre_record_countdown
                 if elapsed < 0.5:
-                    cv2.putText(frame, "3", (frame.shape[1] // 2 - 50, 80), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 4)
+                    cv2.putText(display_frame, "3", (display_frame.shape[1] // 2 - 50, 80), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 4)
                 elif elapsed < 1.0:
-                    cv2.putText(frame, "2", (frame.shape[1] // 2 - 50, 80), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 4)
+                    cv2.putText(display_frame, "2", (display_frame.shape[1] // 2 - 50, 80), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 4)
                 elif elapsed < 1.5:
-                    cv2.putText(frame, "1", (frame.shape[1] // 2 - 50, 80), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 4)
+                    cv2.putText(display_frame, "1", (display_frame.shape[1] // 2 - 50, 80), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 4)
                 else:
                     self.recording = True
                     self.recording_countdown = current_time
@@ -227,13 +229,12 @@ class Chaplin:
             if self.recording:
                 elapsed_recording = current_time - self.recording_countdown
                 seconds_left = max(0, 5 - int(elapsed_recording))
-                # --- Draw recording text on a flipped overlay ---
-                overlay = frame.copy()
-                cv2.putText(overlay, f"Recording: {seconds_left}", (frame.shape[1] // 2 - 120, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                # Draw recording text on a flipped overlay, blend only the text
+                overlay = np.zeros_like(display_frame)
+                cv2.putText(overlay, f"Recording: {seconds_left}", (display_frame.shape[1] // 2 - 120, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
                 overlay = cv2.flip(overlay, 1)
-                # Blend overlay with frame for flipped text
-                alpha = 0.7
-                frame = cv2.addWeighted(frame, 1 - alpha, overlay, alpha, 0)
+                mask = cv2.cvtColor(overlay, cv2.COLOR_BGR2GRAY)
+                display_frame = np.where(mask[..., None] > 0, overlay, display_frame)
                 if seconds_left == 0:
                     self.recording = False
                     self.processing_output = True
@@ -241,7 +242,7 @@ class Chaplin:
 
             if current_time - last_frame_time >= self.frame_interval:
                 encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), self.frame_compression]
-                _, buffer = cv2.imencode('.jpg', frame, encode_param)
+                _, buffer = cv2.imencode('.jpg', display_frame, encode_param)
                 compressed_frame = cv2.imdecode(buffer, cv2.IMREAD_GRAYSCALE)
                 if self.recording:
                     if out is None:
@@ -273,8 +274,8 @@ class Chaplin:
                         False
                     )
                     frame_count = 0
-                # Flip for front camera effect
-                cv2.imshow('Chaplin', cv2.flip(frame, 1))
+                # Show the frame as normal, only text is flipped
+                cv2.imshow('Chaplin', display_frame)
 
             for fut in futures:
                 if fut.done():
