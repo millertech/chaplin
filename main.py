@@ -157,6 +157,11 @@ class Chaplin:
         return False
 
     def start_webcam(self):
+        # --- Clean up mp4 files at the start of the run ---
+        for file in os.listdir():
+            if file.startswith(self.output_prefix) and file.endswith('.mp4'):
+                os.remove(file)
+
         cap = cv2.VideoCapture(0)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640 // self.res_factor)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480 // self.res_factor)
@@ -199,14 +204,12 @@ class Chaplin:
 
             mouth_circle = self.detect_mouth_circle(gray, faces)
 
-            # Only allow new recording if not processing output
             if not self.processing_output:
                 if mouth_circle and not self.recording and not self.countdown_started:
                     self.pre_record_countdown = current_time
                     self.countdown_started = True
                     print("Mouth 'O' detected: Starting 1.5-second countdown.")
 
-            # Handle pre-record countdown (1.5 seconds, 0.5s per number)
             if self.countdown_started and not self.recording:
                 elapsed = current_time - self.pre_record_countdown
                 if elapsed < 0.5:
@@ -221,12 +224,16 @@ class Chaplin:
                     self.countdown_started = False
                     print("Countdown complete: Starting recording.")
 
-            # Handle recording and recording countdown
             if self.recording:
                 elapsed_recording = current_time - self.recording_countdown
                 seconds_left = max(0, 5 - int(elapsed_recording))
-                # Smaller text at top, flipped for front camera
-                cv2.putText(frame, f"Recording: {seconds_left}", (frame.shape[1] // 2 - 120, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                # --- Draw recording text on a flipped overlay ---
+                overlay = frame.copy()
+                cv2.putText(overlay, f"Recording: {seconds_left}", (frame.shape[1] // 2 - 120, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                overlay = cv2.flip(overlay, 1)
+                # Blend overlay with frame for flipped text
+                alpha = 0.7
+                frame = cv2.addWeighted(frame, 1 - alpha, overlay, alpha, 0)
                 if seconds_left == 0:
                     self.recording = False
                     self.processing_output = True
