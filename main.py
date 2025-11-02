@@ -30,12 +30,8 @@ class Chaplin:
         self.setup_model_cache()
 
         self.executor = ThreadPoolExecutor(max_workers=1)
-
-        # flag to toggle recording
         self.recording = False
-
         self.processing_output = False
-        self.recording = False
         self.pre_record_countdown = None
         self.recording_countdown = None
         self.countdown_started = False
@@ -45,8 +41,7 @@ class Chaplin:
         self.frame_interval = 1 / self.fps
         self.frame_compression = 25
         self.kb = keyboard.Controller()
-        self.tts_engine = pyttsx3.init()
-        self.tts_engine.setProperty('rate', 120)
+        # Remove persistent tts_engine
         # Circle detection smoothing
         self.p_x, self.p_y, self.p_w, self.p_h = 0, 0, 0, 0
         self.box_alpha = 0.01
@@ -107,8 +102,11 @@ class Chaplin:
         print(f"\nAt {formatted_time_str}, Judy said: \n")
         print(f"\t: {output}")
         print(f'\n----------------------------------\n')
-        self.tts_engine.say(f"{output}")
-        self.tts_engine.runAndWait()
+        # Re-initialize TTS engine for each playback
+        tts_engine = pyttsx3.init()
+        tts_engine.setProperty('rate', 120)
+        tts_engine.say(f"{output}")
+        tts_engine.runAndWait()
         self.processing_output = False
         return {
             "output": output,
@@ -140,8 +138,8 @@ class Chaplin:
                 dp=1.5,
                 minDist=int(h_mouth * 0.5),
                 param1=100,
-                param2=35,
-                minRadius=int(h_mouth * 0.05),
+                param2=45,  # Less sensitive (was 35)
+                minRadius=int(h_mouth * 0.15),  # Larger min radius (was 0.05)
                 maxRadius=int(h_mouth * 0.45)
             )
 
@@ -206,17 +204,17 @@ class Chaplin:
                 if mouth_circle and not self.recording and not self.countdown_started:
                     self.pre_record_countdown = current_time
                     self.countdown_started = True
-                    print("Mouth 'O' detected: Starting 3-second countdown.")
+                    print("Mouth 'O' detected: Starting 1.5-second countdown.")
 
-            # Handle pre-record countdown
+            # Handle pre-record countdown (1.5 seconds, 0.5s per number)
             if self.countdown_started and not self.recording:
                 elapsed = current_time - self.pre_record_countdown
-                if elapsed < 1:
-                    cv2.putText(frame, "3", (frame.shape[1] // 2 - 50, frame.shape[0] // 2), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 5)
-                elif elapsed < 2:
-                    cv2.putText(frame, "2", (frame.shape[1] // 2 - 50, frame.shape[0] // 2), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 5)
-                elif elapsed < 3:
-                    cv2.putText(frame, "1", (frame.shape[1] // 2 - 50, frame.shape[0] // 2), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 5)
+                if elapsed < 0.5:
+                    cv2.putText(frame, "3", (frame.shape[1] // 2 - 50, 80), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 4)
+                elif elapsed < 1.0:
+                    cv2.putText(frame, "2", (frame.shape[1] // 2 - 50, 80), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 4)
+                elif elapsed < 1.5:
+                    cv2.putText(frame, "1", (frame.shape[1] // 2 - 50, 80), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 4)
                 else:
                     self.recording = True
                     self.recording_countdown = current_time
@@ -227,7 +225,8 @@ class Chaplin:
             if self.recording:
                 elapsed_recording = current_time - self.recording_countdown
                 seconds_left = max(0, 5 - int(elapsed_recording))
-                cv2.putText(frame, f"Recording: {seconds_left}", (frame.shape[1] // 2 - 100, frame.shape[0] // 2), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 3)
+                # Smaller text at top, flipped for front camera
+                cv2.putText(frame, f"Recording: {seconds_left}", (frame.shape[1] // 2 - 120, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
                 if seconds_left == 0:
                     self.recording = False
                     self.processing_output = True
@@ -267,7 +266,8 @@ class Chaplin:
                         False
                     )
                     frame_count = 0
-                cv2.imshow('Chaplin', cv2.flip(compressed_frame, 1))
+                # Flip for front camera effect
+                cv2.imshow('Chaplin', cv2.flip(frame, 1))
 
             for fut in futures:
                 if fut.done():
